@@ -1,0 +1,992 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>three.js webgl - gpgpu - erosion</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<style>
+			body {
+				background-color: #000000;
+				margin: 0px;
+				overflow: hidden;
+				font-family:Monospace;
+				font-size:13px;
+				text-align:center;
+				text-align:center;
+			}
+
+			a {
+				color:#0078ff;
+			}
+
+			#info {
+				color: #ffffff;
+				position: absolute;
+				top: 10px;
+				width: 100%;
+			}
+
+		</style>
+	</head>
+	<body>
+
+		<div id="info">
+			<a href="http://threejs.org" target="_blank">three.js</a> - <span id="terrainSize"></span> webgl gpgpu erosion<br/>
+			Select <span id="options"></span> terrain size<br/>
+			Press mouse button to orbit around.<br/>
+			W toggles wireframe.<br/>
+		</div>
+
+		<script src="build/three.js"></script>
+		<script src="js/Detector.js"></script>
+		<script src="js/libs/stats.min.js"></script>
+		<script src="js/libs/dat.gui.min.js"></script>
+		<script src="js/controls/OrbitControls.js"></script>
+		<script src="js/SimplexNoise.js"></script>
+
+		<script src="js/GPUComputationRenderer2.js"></script>
+
+
+		<!-- Fragment shader for particles position -->
+		<script id="computeShaderPosition" type="x-shader/x-fragment">
+
+			#define delta ( 1.0 / 60.0 )
+
+			#define gravity ( 9.8 )
+
+			float rand( vec2 co ) {
+			   return fract( sin( dot( co.xy, vec2( 12.9898, 78.233 ) ) ) * 43758.5453 );
+			}
+
+			uniform float frameNumber;
+
+			uniform float particleLifetime;
+
+			void main()	{
+
+				vec2 uvParticles = gl_FragCoord.xy / texturePositionResolution.xy;
+
+				vec4 tmpPos = texture2D( texturePosition, uvParticles );
+				vec3 pos = tmpPos.xyz;
+				float particleBirthTime = tmpPos.w;
+
+				vec4 tmpVel = texture2D( textureVelocity, uvParticles );
+				vec3 vel = tmpVel.xyz;
+
+				float radius = 1.0;
+
+				vec2 uvHeightmap = 0.5 * ( 2.0 * pos.xz / BOUNDS + vec2( 1.0, 1.0 ) );
+				uvHeightmap.y = 1.0 - uvHeightmap.y;
+
+				float height = texture2D( heightmap, uvHeightmap ).x;
+
+				// Dynamics
+				vec3 acceleration = vec3( 0.0, - gravity, 0.0 );
+				vel += delta * acceleration;
+			        pos += vel * delta;
+
+				if ( pos.y < height + 0.5 ) {
+					pos.y = height + 0.5;
+				}
+
+				if ( ( abs( pos.x ) > BOUNDS * 0.5 ) || ( abs( pos.z ) > BOUNDS * 0.5 ) || ( particleBirthTime + particleLifetime < frameNumber ) ) {
+
+					// The particle exits the limits or dies. Make it rain again
+
+					// Get random number
+					float seed = pos.x + pos.z + frameNumber;
+					//float seed = frameNumber;
+					vec2 uvRandom = vec2( mod( seed, 512.0 ) / 512.0, floor( seed / 512.0 ) );
+
+					vec2 randomVector = vec2( rand( uvRandom ) * 2.0 - 1.0, rand( vec2( frameNumber, pos.x ) ) * 2.0 - 1.0 );
+
+					vec2 rainPos = randomVector.xy * BOUNDS * 0.5;
+					pos = vec3( rainPos.x, BOUNDS * 0.5, rainPos.y );
+
+					particleBirthTime = frameNumber;
+
+				}
+
+				gl_FragColor = vec4( pos, particleBirthTime );
+
+			}
+
+		</script>
+
+		<!-- Fragment shader for particles velocity -->
+		<script id="computeShaderVelocity" type="x-shader/x-fragment">
+
+			// For PI declaration:
+			#include <common>
+
+			#define delta ( 1.0 / 60.0 )
+
+			#define gravity ( 9.8 )
+
+			uniform float bounceConstant;
+
+			uniform float frameNumber;
+
+			uniform float particleLifetime;
+
+			void main()	{
+
+				vec2 uv = gl_FragCoord.xy / texturePositionResolution.xy;
+
+				vec4 tmpPos = texture2D( texturePosition, uv );
+				vec3 pos = tmpPos.xyz;
+				float particleBirthTime = tmpPos.w;
+
+				vec4 tmpVel = texture2D( textureVelocity, uv );
+				vec3 vel = tmpVel.xyz;
+				//float notUsed = tmpVel.w;
+
+				float radius = 1.0;
+
+				vec2 uvHeightmap = 0.5 * ( 2.0 * pos.xz / BOUNDS + vec2( 1.0, 1.0 ) );
+				uvHeightmap.y = 1.0 - uvHeightmap.y;
+
+				float height = texture2D( heightmap, uvHeightmap ).x;
+
+				// Dynamics
+				vec3 acceleration = vec3( 0.0, - gravity, 0.0 );
+				vel += delta * acceleration;
+			        vec3 newPos = pos + vel * delta;
+
+				if ( newPos.y < height + radius * 0.5 ) {
+				    
+					newPos.y = height + radius * 0.5 + 0.001;
+
+					// The particle collides with the terrain
+
+					vec2 cellSize = 1.0 / heightmapResolution.xy;
+
+					// Compute normal from heightmap
+					vec3 normal = normalize( vec3(
+						( texture2D( heightmap, uvHeightmap + vec2( - cellSize.x, 0 ) ).x - texture2D( heightmap, uvHeightmap + vec2( cellSize.x, 0 ) ).x ) * heightmapResolution.x / BOUNDS,
+						1.0,
+						- ( texture2D( heightmap, uvHeightmap + vec2( 0, - cellSize.y ) ).x - texture2D( heightmap, uvHeightmap + vec2( 0, cellSize.y ) ).x ) * heightmapResolution.y / BOUNDS ) );
+
+					// Particle reflects in the terrain
+					vec3 vProyVel = dot( vel, normal ) * normal;
+					vel = vel - ( 1.0 + bounceConstant ) * vProyVel;
+
+				}
+
+				if ( ( abs( newPos.x ) > BOUNDS * 0.5 ) || ( abs( newPos.z ) > BOUNDS * 0.5 ) || ( particleBirthTime + particleLifetime < frameNumber ) ) {
+
+				    // The particle exits the limits or dies. Make it rain again (stop velocity)
+
+				    vel *= 0.005;
+
+				}
+
+				gl_FragColor = vec4( vel, 1.0 );
+
+			}
+
+		</script>
+
+		<!-- This is the 'compute shader' for the terrain heightmap: -->
+		<script id="computeShaderHeightmap" type="x-shader/x-fragment">
+
+			#include <common>
+
+			#define deltaTime ( 1.0 / 60.0 )
+
+			uniform sampler2D erosionTexture;
+			uniform float erosionConstant;
+
+			void main()	{
+
+				vec2 cellSize = 1.0 / heightmapResolution.xy;
+
+				vec2 uv = gl_FragCoord.xy * cellSize;
+
+				// heightmapValue.x == height
+				// heightmapValue.y, heightmapValue.z, heightmapValue.w not used
+				vec4 heightmapValue = texture2D( heightmap, uv );
+
+				float erosion = erosionConstant * texture2D( erosionTexture, uv ).w;
+
+				heightmapValue.x -= erosion;
+
+				gl_FragColor = heightmapValue;
+
+			}
+
+		</script>
+
+		<!-- This is just a smoothing 'compute shader' for using manually: -->
+		<script id="smoothFragmentShader" type="x-shader/x-fragment">
+
+			uniform sampler2D texture;
+
+			void main()	{
+
+				vec2 cellSize = 1.0 / textureResolution.xy;
+
+				vec2 uv = gl_FragCoord.xy * cellSize;
+
+				// Computes the mean of texel and 4 neighbours
+				vec4 textureValue = texture2D( texture, uv );
+				textureValue += texture2D( texture, uv + vec2( 0.0, cellSize.y ) );
+				textureValue += texture2D( texture, uv + vec2( 0.0, - cellSize.y ) );
+				textureValue += texture2D( texture, uv + vec2( cellSize.x, 0.0 ) );
+				textureValue += texture2D( texture, uv + vec2( - cellSize.x, 0.0 ) );
+
+				textureValue /= 5.0;
+
+				gl_FragColor = textureValue;
+
+			}
+
+		</script>
+
+		<!-- This is the terrain vertex visualization shader, copied from the MeshPhongMaterial and modified: -->
+		<script id="terrainVertexShader" type="x-shader/x-vertex">
+
+			uniform sampler2D heightmap;
+
+			#define PHONG
+
+			varying vec3 vViewPosition;
+
+			#ifndef FLAT_SHADED
+
+				varying vec3 vNormal;
+
+			#endif
+
+			#include <common>
+			#include <uv_pars_vertex>
+			#include <uv2_pars_vertex>
+			#include <displacementmap_pars_vertex>
+			#include <envmap_pars_vertex>
+			#include <color_pars_vertex>
+			#include <morphtarget_pars_vertex>
+			#include <skinning_pars_vertex>
+			#include <shadowmap_pars_vertex>
+			#include <logdepthbuf_pars_vertex>
+			#include <clipping_planes_pars_vertex>
+
+			void main() {
+
+				vec2 cellSize = vec2( 1.0 / WIDTH, 1.0 / WIDTH );
+
+				#include <uv_vertex>
+				#include <uv2_vertex>
+				#include <color_vertex>
+
+				// # include <beginnormal_vertex>
+				// Compute normal from heightmap
+				vec3 objectNormal = vec3(
+					( texture2D( heightmap, uv + vec2( - cellSize.x, 0 ) ).x - texture2D( heightmap, uv + vec2( cellSize.x, 0 ) ).x ) * WIDTH / BOUNDS,
+					( texture2D( heightmap, uv + vec2( 0, - cellSize.y ) ).x - texture2D( heightmap, uv + vec2( 0, cellSize.y ) ).x ) * WIDTH / BOUNDS,
+					1.0 );
+				//<beginnormal_vertex>
+
+				#include <morphnormal_vertex>
+				#include <skinbase_vertex>
+				#include <skinnormal_vertex>
+				#include <defaultnormal_vertex>
+
+			#ifndef FLAT_SHADED // Normal computed with derivatives when FLAT_SHADED
+
+				vNormal = normalize( transformedNormal );
+
+			#endif
+
+				//# include <begin_vertex>
+				float heightValue = texture2D( heightmap, uv ).x;
+				vec3 transformed = vec3( position.x, position.y, heightValue );
+				//<begin_vertex>
+
+				#include <displacementmap_vertex>
+				#include <morphtarget_vertex>
+				#include <skinning_vertex>
+				#include <project_vertex>
+				#include <logdepthbuf_vertex>
+				#include <clipping_planes_vertex>
+
+				vViewPosition = - mvPosition.xyz;
+
+				#include <worldpos_vertex>
+				#include <envmap_vertex>
+				#include <shadowmap_vertex>
+
+			}
+
+		</script>
+
+		<!-- Particles visualization vertex shader -->
+		<script type="x-shader/x-vertex" id="particleVertexShader">
+
+			uniform sampler2D texturePosition;
+			uniform sampler2D textureVelocity;
+			uniform vec3 waterColor;
+
+			uniform float cameraConstant;
+
+			varying vec4 vColor;
+
+			void main() {
+
+				vec4 posTemp = texture2D( texturePosition, uv );
+				vec3 pos = posTemp.xyz;
+
+				vec4 velTemp = texture2D( textureVelocity, uv );
+				vec3 vel = velTemp.xyz;
+
+				//vColor = vec4( 0.0, 0.5, 0.8, 1.0 );
+				//vColor = vec4( uv.x, uv.y, 0.0, 1.0 );
+				//vColor = vec4( position.x, position.y, position.z, 1.0 );
+				vColor = vec4( waterColor, 1.0 );
+
+				vec4 mvPosition = modelViewMatrix * vec4( pos, 1.0 );
+
+				float radius = 1.0;
+
+				// Apparent size in pixels
+				gl_PointSize = radius * cameraConstant / ( - mvPosition.z );
+
+				gl_Position = projectionMatrix * mvPosition;
+
+			}
+
+		</script>
+
+		<!-- Particles visualization fragment shader -->
+		<script type="x-shader/x-fragment" id="particleFragmentShader">
+
+			varying vec4 vColor;
+
+			void main() {
+
+				float f = length( gl_PointCoord - vec2( 0.5, 0.5 ) );
+				if ( f > 0.5 ) {
+				    discard;
+				}
+				gl_FragColor = vColor;
+
+			}
+
+		</script>
+
+		<!-- Erosion vertex shader -->
+		<script type="x-shader/x-vertex" id="erosionVertexShader">
+
+			uniform sampler2D heightmap;
+			uniform sampler2D texturePosition;
+			uniform sampler2D textureVelocity;
+			uniform float particleRadius;
+
+			varying float erosionIntensity;
+
+			void main() {
+
+				vec4 posTemp = texture2D( texturePosition, uv );
+				vec3 pos = posTemp.xyz;
+
+				vec4 velTemp = texture2D( textureVelocity, uv );
+				vec3 vel = velTemp.xyz;
+
+				vec2 uvHeightmap = 0.5 * ( 2.0 * pos.xz / BOUNDS + vec2( 1.0, 1.0 ) );
+				uvHeightmap.y = 1.0 - uvHeightmap.y;
+
+				float height = pos.y - texture2D( heightmap, uvHeightmap ).x;
+
+				if ( height > 0.65 * 1.5 ) {
+
+				    gl_PointSize = 0.0;
+
+				}
+				else {
+
+				    gl_PointSize = particleRadius;
+
+				}
+
+				vec2 cellSize = 1.0 / heightmapResolution.xy;
+
+				// Compute normal from heightmap
+				vec3 normal = normalize( vec3(
+					( texture2D( heightmap, uvHeightmap + vec2( - cellSize.x, 0 ) ).x - texture2D( heightmap, uvHeightmap + vec2( cellSize.x, 0 ) ).x ) * heightmapResolution.x / BOUNDS,
+					1.0,
+					- ( texture2D( heightmap, uvHeightmap + vec2( 0, - cellSize.y ) ).x - texture2D( heightmap, uvHeightmap + vec2( 0, cellSize.y ) ).x ) * heightmapResolution.y / BOUNDS ) );
+
+				erosionIntensity = length( vel );
+				//erosionIntensity = - dot( vel, normal );
+
+				// Use the erosion as Y coordinate so the Z-buffer sorts them
+				vec4 mvPosition = modelViewMatrix * vec4( pos.x, erosionIntensity, pos.z, 1.0 );
+
+				gl_Position = projectionMatrix * mvPosition;
+
+			}
+
+		</script>
+
+		<!-- Erosion fragment shader -->
+		<script type="x-shader/x-fragment" id="erosionFragmentShader">
+
+			uniform vec3 waterColor;
+
+			varying float erosionIntensity;
+
+			void main() {
+
+				float f = 2.0 * length( gl_PointCoord - vec2( 0.5, 0.5 ) );
+				if ( f > 1.0 ) {
+				    discard;
+				}
+
+				float oneMinusF = 1.0 - f;
+
+				//gl_FragColor = vec4( f * erosionIntensity * erosionIntensity, 0.0, 0.0 , 1.0 );
+				gl_FragColor = vec4( waterColor, oneMinusF * erosionIntensity );
+
+			}
+
+		</script>
+
+
+		<script>
+
+			if ( ! Detector.webgl ) Detector.addGetWebGLMessage();
+
+			var hash = document.location.hash.substr( 1 );
+			if ( hash ) hash = parseInt( hash, 0 );
+
+			// Terrain texture width for simulation
+			var WIDTH = hash || 512;
+
+			// Water size in system units
+			var BOUNDS = 512;
+			var BOUNDS_HALF = BOUNDS * 0.5;
+
+			// Number of particles
+			var PARTICLES_TEXTURE_SIZE = 128;
+			var NUM_PARTICLES = PARTICLES_TEXTURE_SIZE * PARTICLES_TEXTURE_SIZE;
+
+			var container, stats;
+			var camera, scene, renderer, controls;
+
+			var gpuCompute;
+			var terrainMesh;
+			var heightmapVariable;
+			var terrainUniforms;
+			var particlesObject;
+			var particlesPosVariable;
+			var particlesVelVariable;
+			var particlesUniforms;
+			var smoothShader;
+			var frameNumber = 0;
+			var erosionRenderTarget;
+			var erosionScene, erosionCamera;
+			var erosionUniforms;
+
+			var effectController;
+
+			var simplex = new SimplexNoise();
+
+			var terrainColor = new THREE.Color( 0xC05800 );
+			var waterColor = new THREE.Color( 0x0099FF );
+
+			var windowHalfX = window.innerWidth / 2;
+			var windowHalfY = window.innerHeight / 2;
+
+			document.getElementById( 'terrainSize' ).innerText = WIDTH + ' x ' + WIDTH;
+
+			function change(n) {
+				location.hash = n;
+				location.reload();
+				return false;
+			}
+
+
+			var options = '';
+			for ( var i = 8; i < 11; i++ ) {
+				var j = Math.pow( 2, i );
+				options += '<a href="#" onclick="return change(' + j + ')">' + j + 'x' + j + '</a> ';
+			}
+			document.getElementById('options').innerHTML = options;
+
+			init();
+			animate();
+
+			function init() {
+
+				container = document.createElement( 'div' );
+				document.body.appendChild( container );
+
+				camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 1, 3000 );
+				camera.position.set( 0, 200, 350 );
+
+				scene = new THREE.Scene();
+
+				var sun = new THREE.DirectionalLight( 0xFFFFFF, 1.0 );
+				sun.position.set( 100, 200, 75 );
+				scene.add( sun );
+
+				renderer = new THREE.WebGLRenderer();
+				renderer.setClearColor( 0x000000 );
+				renderer.setPixelRatio( window.devicePixelRatio );
+				renderer.setSize( window.innerWidth, window.innerHeight );
+				container.appendChild( renderer.domElement );
+
+				controls = new THREE.OrbitControls( camera, renderer.domElement );
+
+
+				stats = new Stats();
+				container.appendChild( stats.dom );
+
+				document.addEventListener( 'keydown', function( event ) {
+
+					// W Pressed: Toggle wireframe
+					if ( event.keyCode === 87 ) {
+
+						terrainMesh.material.wireframe = ! terrainMesh.material.wireframe;
+						terrainMesh.material.needsUpdate = true;
+
+					}
+
+				} , false );
+
+				window.addEventListener( 'resize', onWindowResize, false );
+
+
+				var gui = new dat.GUI();
+
+				effectController = {
+
+					bounceConstant: 0.1,
+					particleLifetime: 1000,
+
+					erosionConstant: 0.0005,
+
+					waterVisible: true,
+					waterVisiblePrevious: false,
+					rainVisible: true
+				};
+
+				var valuesChanger = function() {
+
+					particlesVelVariable.material.uniforms.bounceConstant.value = effectController.bounceConstant;
+
+					particlesVelVariable.material.uniforms.particleLifetime.value = effectController.particleLifetime;
+					particlesPosVariable.material.uniforms.particleLifetime.value = effectController.particleLifetime;
+
+					if ( effectController.waterVisiblePrevious !== effectController.waterVisible ) {
+
+						setWaterVisible( effectController.waterVisible );
+						effectController.waterVisiblePrevious = effectController.waterVisible;
+
+					}
+
+					particlesObject.visible = effectController.rainVisible;
+
+					heightmapVariable.material.uniforms.erosionConstant.value = effectController.erosionConstant;
+
+				};
+
+				gui.add( effectController, "bounceConstant", 0.0, 1.0, 0.001 ).onChange( valuesChanger );
+				gui.add( effectController, "particleLifetime", 500.0, 6000.0, 1.0 ).onChange( valuesChanger );
+
+				gui.add( effectController, "erosionConstant", 0.0005, 0.005, 0.0005 ).onChange( valuesChanger );
+
+				gui.add( effectController, "rainVisible", false ).onChange( valuesChanger );
+				gui.add( effectController, "waterVisible", false ).onChange( valuesChanger );
+
+				initTerrain();
+
+				initParticles();
+
+				initComputing();
+
+				valuesChanger();
+
+			}
+
+
+			function initTerrain() {
+
+				var geometry = new THREE.PlaneBufferGeometry( BOUNDS, BOUNDS, WIDTH - 1, WIDTH -1 );
+
+				// material: make a ShaderMaterial clone of MeshPhongMaterial, with customized vertex shader
+				var material = new THREE.ShaderMaterial( {
+					uniforms: THREE.UniformsUtils.merge( [
+						THREE.ShaderLib[ 'phong' ].uniforms,
+						{
+							heightmap: { value: null }
+						}
+					] ),
+					vertexShader: document.getElementById( 'terrainVertexShader' ).textContent,
+					fragmentShader: THREE.ShaderChunk[ 'meshphong_frag' ]
+
+				} );
+
+				material.lights = true;
+
+				// Material attributes from MeshPhongMaterial
+				material.color = terrainColor;
+				material.specular = new THREE.Color( 0x000000 );
+				material.shininess = 1;
+				material.map = null;
+
+				// Sets the uniforms with the material values
+				material.uniforms.diffuse.value = material.color;
+				material.uniforms.specular.value = material.specular;
+				material.uniforms.shininess.value = Math.max( material.shininess, 1e-4 );
+				material.uniforms.opacity.value = material.opacity;
+				material.uniforms.map.value = material.map;
+
+				// Defines
+				material.defines.WIDTH = WIDTH.toFixed( 1 );
+				material.defines.BOUNDS = BOUNDS.toFixed( 1 );
+
+				terrainUniforms = material.uniforms;
+
+				terrainMesh = new THREE.Mesh( geometry, material );
+				terrainMesh.rotation.x = - Math.PI / 2;
+				terrainMesh.matrixAutoUpdate = false;
+				terrainMesh.updateMatrix();
+
+				scene.add( terrainMesh );
+
+			}
+
+			function initParticles() {
+
+				var geometry = new THREE.BufferGeometry();
+
+				var positions = new Float32Array( NUM_PARTICLES * 3 );
+				var p = 0;
+				for ( var i = 0; i < NUM_PARTICLES; i++ ) {
+
+					positions[ p++ ] = ( Math.random() * 2 - 1 ) * 50;
+					positions[ p++ ] = Math.random() * 100 + 165;
+					positions[ p++ ] = ( Math.random() * 2 - 1 ) * 50;
+
+				}
+
+				var uvs = new Float32Array( NUM_PARTICLES * 2 );
+				p = 0;
+				for ( var j = 0; j < PARTICLES_TEXTURE_SIZE; j++ ) {
+					for ( var i = 0; i < PARTICLES_TEXTURE_SIZE; i++ ) {
+
+						uvs[ p++ ] = i / ( PARTICLES_TEXTURE_SIZE - 1 );
+						uvs[ p++ ] = j / ( PARTICLES_TEXTURE_SIZE - 1 );
+
+					}
+				}
+
+				geometry.addAttribute( 'position', new THREE.BufferAttribute( positions, 3 ) );
+				geometry.addAttribute( 'uv', new THREE.BufferAttribute( uvs, 2 ) );
+
+				particlesUniforms = {
+					texturePosition: { value: null },
+					textureVelocity: { value: null },
+					cameraConstant: { value: getCameraConstant( camera ) },
+					waterColor: { value: waterColor }
+				};
+
+				var material = new THREE.ShaderMaterial( {
+					uniforms:       particlesUniforms,
+					vertexShader:   document.getElementById( 'particleVertexShader' ).textContent,
+					fragmentShader: document.getElementById( 'particleFragmentShader' ).textContent
+				} );
+				material.defines.BOUNDS = BOUNDS.toFixed( 1 );
+
+				particlesObject = new THREE.Points( geometry, material );
+				particlesObject.matrixAutoUpdate = false;
+				particlesObject.updateMatrix();
+				particlesObject.frustumCulled = false;
+
+				scene.add( particlesObject );
+
+
+				// Create scene to draw the particles as velocity
+
+				erosionScene = new THREE.Scene();
+				erosionCamera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 1, 3000 );
+				var near = 0.0;
+				var far = 1000.0;
+				erosionCamera = new THREE.OrthographicCamera( - BOUNDS_HALF, BOUNDS_HALF, BOUNDS_HALF, - BOUNDS_HALF, near, far );
+				erosionCamera.rotation.x = - Math.PI * 0.5;
+				erosionCamera.position.y = erosionCamera.far;
+
+				erosionUniforms = {
+					heightmap: { value: null },
+					texturePosition: { value: null },
+					textureVelocity: { value: null },
+					waterColor: { value: waterColor },
+					particleRadius: { value: 1.6 * WIDTH / 256 }
+				};
+
+				var materialErosionParticles = new THREE.ShaderMaterial( {
+					uniforms:       erosionUniforms,
+					vertexShader:   document.getElementById( 'erosionVertexShader' ).textContent,
+					fragmentShader: document.getElementById( 'erosionFragmentShader' ).textContent
+				} );
+				materialErosionParticles.defines.heightmapResolution = 'vec2( ' + WIDTH.toFixed( 1 ) + ', ' + WIDTH.toFixed( 1 ) + " )";
+				materialErosionParticles.defines.BOUNDS = BOUNDS.toFixed( 1 );
+
+				var erosionParticlesObject = new THREE.Points( geometry, materialErosionParticles );
+				erosionParticlesObject.matrixAutoUpdate = false;
+				erosionParticlesObject.updateMatrix();
+				erosionParticlesObject.frustumCulled = false;
+
+				erosionScene.add( erosionParticlesObject );
+
+			}
+
+			function initComputing() {
+
+				// Creates the gpu computation class and sets it up
+
+				gpuCompute = new GPUComputationRenderer( WIDTH, WIDTH, renderer );
+
+				var heightmap0 = gpuCompute.createTexture();
+
+				// Heightmap variable
+
+				fillHeightmapTexture( heightmap0 );
+
+				heightmapVariable = gpuCompute.addVariable( "heightmap", document.getElementById( 'computeShaderHeightmap' ).textContent, heightmap0 );
+
+				erosionRenderTarget = gpuCompute.createRenderTarget( THREE.ClampToEdgeWrapping, THREE.ClampToEdgeWrapping, WIDTH, WIDTH, THREE.LinearFilter, THREE.LinearFilter );
+
+				heightmapVariable.minFilter = THREE.LinearFilter;
+				heightmapVariable.magFilter = THREE.LinearFilter;
+
+				heightmapVariable.material.uniforms.erosionTexture = { value: erosionRenderTarget.texture };
+				heightmapVariable.material.uniforms.erosionConstant = { value: 0 };
+				heightmapVariable.material.defines.BOUNDS = BOUNDS.toFixed( 1 );
+
+				// Particles position and velocity variables
+
+				var particlesPos0 = gpuCompute.createTexture( PARTICLES_TEXTURE_SIZE, PARTICLES_TEXTURE_SIZE );
+				var particlesVel0 = gpuCompute.createTexture( PARTICLES_TEXTURE_SIZE, PARTICLES_TEXTURE_SIZE );
+
+				fillParticlesTextures( particlesPos0, particlesVel0 );
+
+				particlesVelVariable = gpuCompute.addVariable( "textureVelocity", document.getElementById( 'computeShaderVelocity' ).textContent, particlesVel0 );
+				particlesPosVariable = gpuCompute.addVariable( "texturePosition", document.getElementById( 'computeShaderPosition' ).textContent, particlesPos0 );
+
+				particlesVelVariable.sizeX = PARTICLES_TEXTURE_SIZE;
+				particlesVelVariable.sizeY = PARTICLES_TEXTURE_SIZE;
+				particlesPosVariable.sizeX = PARTICLES_TEXTURE_SIZE;
+				particlesPosVariable.sizeY = PARTICLES_TEXTURE_SIZE;
+				particlesVelVariable.material.uniforms.bounceConstant = { value: 0.5 };
+				particlesVelVariable.material.uniforms.frameNumber = { value: 0.0 };
+				particlesVelVariable.material.uniforms.particleLifetime = { value: 1000.0 };
+				particlesVelVariable.material.defines.BOUNDS = BOUNDS.toFixed( 1 );
+
+				particlesPosVariable.material.uniforms.frameNumber = { value: 0.0 };
+				particlesPosVariable.material.uniforms.particleLifetime = { value: 1000.0 };
+				particlesPosVariable.material.defines.BOUNDS = BOUNDS.toFixed( 1 );
+
+				gpuCompute.setVariableDependencies( heightmapVariable, [ heightmapVariable, particlesVelVariable, particlesPosVariable ] );
+				gpuCompute.setVariableDependencies( particlesVelVariable, [ heightmapVariable, particlesVelVariable, particlesPosVariable ] );
+				gpuCompute.setVariableDependencies( particlesPosVariable, [ heightmapVariable, particlesVelVariable, particlesPosVariable ] );
+
+				var error = gpuCompute.init();
+				if ( error !== null ) {
+					console.error( error );
+				}
+
+				// Create compute shader to smooth terrain
+				smoothShader = gpuCompute.createShaderMaterial(
+					document.getElementById( 'smoothFragmentShader' ).textContent,
+					{
+					    texture: { value: null },
+					    textureResolution: { value: new THREE.Vector2( WIDTH, WIDTH ) }
+					}
+				);
+
+			}
+
+			function setWaterVisible( visible ) {
+
+			    var material = terrainMesh.material;
+
+			    if ( visible ) {
+
+				    material.color = new THREE.Color( 0xFFFFFF );
+				    material.uniforms.diffuse.value = material.color;
+				    material.map = erosionRenderTarget.texture;
+				    material.uniforms.map.value = material.map;
+
+			    }
+			    else {
+				    material.color = terrainColor;
+				    material.uniforms.diffuse.value = material.color;
+				    material.map = null;
+				    material.uniforms.map.value = material.map;
+			    }
+
+			    material.needsUpdate = true;
+
+			}
+
+			function fillHeightmapTexture( texture ) {
+
+				var noiseHeight = 10;
+				var functionHeight = 50;
+
+				function noise( x, y, z ) {
+					var multR = noiseHeight;
+					var mult = 0.025;
+					var r = 0;
+					for ( var i = 0; i < 15; i++ ) {
+						r += multR * simplex.noise3d( x * mult, y * mult, z * mult );
+						multR *= 0.53 + 0.02 * i;
+						mult *= 1.45;
+					}
+					return r;
+				}
+
+				var pixels = texture.image.data;
+
+				var p = 0;
+				for ( var j = 0; j < WIDTH; j++ ) {
+					for ( var i = 0; i < WIDTH; i++ ) {
+
+						var x = i * 128 / WIDTH;
+						var y = j * 128 / WIDTH;
+
+						var h = ( Math.cos( 0.04 * ( y - 128 * 0.5 ) ) ) * functionHeight + noise( x, y, 123.4 );
+
+						var x2 = Math.abs( 2 * i / WIDTH - 1 );
+						var y2 = Math.abs( 2 * j / WIDTH - 1 );
+						//var h = ( 1 - Math.sqrt( x2 * x2 + y2 * y2 ) ) * functionHeight + noise( x, y, 123.4 );
+
+					        pixels[ p++ ] = h;
+						pixels[ p++ ] = 0;
+						pixels[ p++ ] = 0;
+						pixels[ p++ ] = 1;
+
+					}
+				}
+
+			}
+
+			function fillParticlesTextures( particlesPosition0, particlesVelocity0 ) {
+
+				var positions = particlesPosition0.image.data;
+
+				var p = 0;
+
+				for ( var j = 0; j < PARTICLES_TEXTURE_SIZE; j++ ) {
+
+					for ( var i = 0; i < PARTICLES_TEXTURE_SIZE; i++ ) {
+
+						// x
+						// y
+						// z
+						// birth time (frame number)
+
+						positions[ p++ ] = ( Math.random() * 2 - 1 ) * BOUNDS_HALF;
+						positions[ p++ ] = Math.random() * 100 + 165;
+						positions[ p++ ] = ( Math.random() * 2 - 1 ) * BOUNDS_HALF;
+						positions[ p++ ] = - Math.random() * 200;
+
+					}
+
+				}
+
+				var velocities = particlesVelocity0.image.data;
+
+				p = 0;
+
+				for ( var j = 0; j < PARTICLES_TEXTURE_SIZE; j++ ){
+
+					for ( var i = 0; i < PARTICLES_TEXTURE_SIZE; i++ ) {
+
+						velocities[ p++ ] = 0;
+						velocities[ p++ ] = 0;
+						velocities[ p++ ] = 0;
+						velocities[ p++ ] = 1;
+
+					}
+
+				}
+			}
+
+			function smoothTerrain() {
+
+				var currentRenderTarget = gpuCompute.getCurrentRenderTarget( heightmapVariable );
+				var alternateRenderTarget = gpuCompute.getAlternateRenderTarget( heightmapVariable );
+
+				for ( var i = 0; i < 10; i++ ) {
+
+					smoothShader.uniforms.texture.value = currentRenderTarget.texture;
+					gpuCompute.doRenderTarget( smoothShader, alternateRenderTarget );
+
+					smoothShader.uniforms.texture.value = alternateRenderTarget.texture;
+					gpuCompute.doRenderTarget( smoothShader, currentRenderTarget );
+
+				}
+				
+			}
+
+			function getCameraConstant( camera ) {
+
+				return window.innerHeight / ( Math.tan( THREE.Math.DEG2RAD * 0.5 * camera.fov ) / camera.zoom );
+
+			}
+
+			function onWindowResize() {
+
+				windowHalfX = window.innerWidth / 2;
+				windowHalfY = window.innerHeight / 2;
+
+				camera.aspect = window.innerWidth / window.innerHeight;
+				camera.updateProjectionMatrix();
+
+				renderer.setSize( window.innerWidth, window.innerHeight );
+
+				particlesUniforms.cameraConstant.value = getCameraConstant( camera );
+
+			}
+
+			function animate() {
+
+				requestAnimationFrame( animate );
+
+				render();
+				stats.update();
+
+			}
+
+			function render() {
+
+				// Render erosion texture
+				erosionUniforms.heightmap.value = gpuCompute.getCurrentRenderTarget( heightmapVariable ).texture;
+				erosionUniforms.texturePosition.value = gpuCompute.getCurrentRenderTarget( particlesPosVariable ).texture;
+				erosionUniforms.textureVelocity.value = gpuCompute.getCurrentRenderTarget( particlesVelVariable ).texture;
+				renderer.setClearColor( terrainColor );
+				renderer.render( erosionScene, erosionCamera, erosionRenderTarget );
+				renderer.setClearColor( 0x000000 );
+
+				particlesPosVariable.material.uniforms.frameNumber.value = frameNumber;
+				particlesVelVariable.material.uniforms.frameNumber.value = frameNumber;
+				frameNumber++;
+
+				// Do the gpu computation
+				gpuCompute.compute();
+
+				// Get compute output in custom uniforms
+				terrainUniforms.heightmap.value = gpuCompute.getCurrentRenderTarget( heightmapVariable ).texture;
+				particlesUniforms.texturePosition.value = gpuCompute.getCurrentRenderTarget( particlesPosVariable ).texture;
+				particlesUniforms.textureVelocity.value = gpuCompute.getCurrentRenderTarget( particlesVelVariable ).texture;
+
+				// Render
+				renderer.render( scene, camera );
+
+			}
+
+		</script>
+	</body>
+</html>
