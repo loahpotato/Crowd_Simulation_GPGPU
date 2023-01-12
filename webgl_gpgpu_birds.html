@@ -6,7 +6,7 @@
 		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
 		<style>
 			body {
-				background-color: #ffffff;
+				background-color: #f7f7f7;
 				margin: 0px;
 				overflow: hidden;
 				font-family:Monospace;
@@ -261,7 +261,7 @@
 
 				if ( birdVertex == 4.0 || birdVertex == 7.0 ) {
 					// flap wings
-					newPosition.y = sin( tmpPos.w ) * 5.;
+					newPosition.y = sin( tmpPos.w ) * 0.;
 				}
 
 				newPosition = mat3( modelMatrix ) * newPosition;
@@ -293,9 +293,9 @@
 
 				newPosition =  maty * matz * newPosition;
 				newPosition += pos;
-
+				
 				z = newPosition.z;
-
+				
 				vColor = vec4( birdColor, 1.0 );
 				gl_Position = projectionMatrix *  viewMatrix  * vec4( newPosition, 1.0 );
 			}
@@ -312,7 +312,9 @@
 
 			void main() {
 				// Fake colors for now
-				float z2 = 0.2 + ( 1000. - z ) / 1000. * vColor.x;
+				// color fade 
+				//float z2 = 0.2 + ( 1000. - z ) / 1000. * vColor.x;
+				float z2 =  vColor.x;
 				gl_FragColor = vec4( z2, z2, z2, 1. );
 
 			}
@@ -434,9 +436,9 @@
 				return false;
 			}
 
-
+			//Number of birds controler
 			var options = '';
-			for (i=1; i<7; i++) {
+			for (i=1; i<9; i++) {
 				var j = Math.pow(2, i);
 				options += '<a href="#" onclick="return change(' + j + ')">' + (j * j) + '</a> ';
 			}
@@ -520,7 +522,7 @@
 
 			function initComputeRenderer() {
 
-    				gpuCompute = new GPUComputationRenderer( WIDTH, WIDTH, renderer );
+    			gpuCompute = new GPUComputationRenderer( WIDTH, WIDTH, renderer );
 
 				var dtPosition = gpuCompute.createTexture();
 				var dtVelocity = gpuCompute.createTexture();
@@ -563,7 +565,8 @@
 			function initBirds() {
 
 				var geometry = new THREE.BirdGeometry();
-
+			
+				
 				// For Vertex and Fragment
 				birdUniforms = {
 					color: { value: new THREE.Color( 0xff2200 ) },
@@ -581,6 +584,7 @@
 					side: THREE.DoubleSide
 
 				});
+				//const material = new THREE.MeshBasicMaterial( {color: 0xffff00} );
 
 				birdMesh = new THREE.Mesh( geometry, material );
 				birdMesh.rotation.y = Math.PI / 2;
