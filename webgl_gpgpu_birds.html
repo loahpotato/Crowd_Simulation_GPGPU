@@ -52,10 +52,10 @@
 
 		-->
 
-
+		
 		<!-- shader for bird's position -->
 		<script id="fragmentShaderPosition" type="x-shader/x-fragment">
-
+			
 			uniform float time;
 			uniform float delta;
 
@@ -371,24 +371,24 @@
 
 					// Body
 					verts_push(
-						0, -0, -20,
-						0, 10, -20,
-						0, 0, 30
+						0, 0, 0,
+						0, 10, 0,
+						0, 5, 30
 					);
 					
 					
 					// Left Wing
 					verts_push(
-						0, 0, -15,
-						-wingsSpan, 0, 0,
-						0, 0, 15
+						0, 0, 0,
+						-10, 8, 0,
+						0, 5, 30
 					);
 
 					// Right Wing
 					verts_push(
-						0, 0, 15,
-						wingsSpan, 0, 0,
-						0, 0, -15
+						0, 10, 0,
+						-10, 8, 0,
+						0, 5, 30
 					);
 					
 
@@ -657,8 +657,8 @@
 
 			function onDocumentMouseMove( event ) {
 
-				mouseX = event.clientX - windowHalfX;
-				mouseY = event.clientY - windowHalfY;
+				//mouseX = event.clientX - windowHalfX;
+				//mouseY = event.clientY - windowHalfY;
 				//camera.rotation.y = -mouseX * Math.PI/180;
 				//camera.rotation.x = -mouseY * Math.PI/180;
 				//console.log(mouseX);
