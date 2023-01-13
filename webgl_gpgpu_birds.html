@@ -32,17 +32,18 @@
 	<body>
 
 		<div id="info">
-			<a href="http://threejs.org" target="_blank">three.js</a> - <span id="birds"></span> webgl gpgpu birds<br/>
+			<span id="birds"></span> webgl gpgpu birds<br/>
 			Select <span id="options"></span> birds<br/>
 			Move mouse to disturb birds.
 
 		</div>
 
 		<script src="build/three.js"></script>
+		<script src="js/controls/OrbitControls.js"></script>
+		
 		<script src="js/Detector.js"></script>
 		<script src="js/libs/stats.min.js"></script>
 		<script src="js/libs/dat.gui.min.js"></script>
-
 		<script src="js/GPUComputationRenderer.js"></script>
 
 		<!--
@@ -314,8 +315,10 @@
 				// Fake colors for now
 				// color fade 
 				//float z2 = 0.2 + ( 1000. - z ) / 1000. * vColor.x;
+				//gl_FragColor = vec4( z2, z2, z2, 1. );
 				float z2 =  vColor.x;
-				gl_FragColor = vec4( z2, z2, z2, 1. );
+				gl_FragColor = vec4( 1., 0.5, 0.5, 1. );
+				
 
 			}
 
@@ -323,7 +326,6 @@
 
 
 		<script>
-
 			if ( ! Detector.webgl ) Detector.addGetWebGLMessage();
 
 			var hash = document.location.hash.substr( 1 );
@@ -331,14 +333,14 @@
 
 			/* TEXTURE WIDTH FOR SIMULATION */
 			var WIDTH = hash || 32;
-
-			var BIRDS = WIDTH * WIDTH;
+			//WIDTH = 20;
+			var BIRDS = WIDTH*WIDTH;
 
 			// Custom Geometry - using 3 triangles each. No UVs, no normals currently.
 			THREE.BirdGeometry = function () {
 
-				var triangles = BIRDS * 3;
-				var points = triangles * 3;
+				var triangles = BIRDS*3;
+				var points = triangles*3;
 
 				THREE.BufferGeometry.call( this );
 
@@ -356,24 +358,25 @@
 
 
 				var v = 0;
-
 				function verts_push() {
 					for (var i=0; i < arguments.length; i++) {
 						vertices.array[v++] = arguments[i];
 					}
+					
 				}
 
 				var wingsSpan = 20;
-
+				
 				for (var f = 0; f<BIRDS; f++ ) {
 
 					// Body
 					verts_push(
 						0, -0, -20,
-						0, 4, -20,
+						0, 10, -20,
 						0, 0, 30
 					);
-
+					
+					
 					// Left Wing
 					verts_push(
 						0, 0, -15,
@@ -387,6 +390,7 @@
 						wingsSpan, 0, 0,
 						0, 0, -15
 					);
+					
 
 				}
 
@@ -412,7 +416,7 @@
 
 				}
 
-				this.scale( 0.2, 0.2, 0.2 );
+				this.scale( 0.5, 0.5, 0.5 );
 
 			};
 
@@ -438,9 +442,10 @@
 
 			//Number of birds controler
 			var options = '';
+			var j = 1;
 			for (i=1; i<9; i++) {
-				var j = Math.pow(2, i);
-				options += '<a href="#" onclick="return change(' + j + ')">' + (j * j) + '</a> ';
+				j = Math.pow(2,i);
+				options += '<a href="#" onclick="return change(' + j + ')">' + (j*j) + '</a> ';
 			}
 			document.getElementById('options').innerHTML = options;
 
@@ -461,17 +466,20 @@
 				container = document.createElement( 'div' );
 				document.body.appendChild( container );
 
-				camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 1, 3000 );
-				camera.position.z = 350;
+				camera = new THREE.PerspectiveCamera( 60, window.innerWidth / window.innerHeight,1,10000);
+				camera.position.z = 300;
 
 				scene = new THREE.Scene();
 
-				scene.fog = new THREE.Fog( 0xffffff, 100, 1000 );
+				scene.fog = new THREE.Fog( 0xadd8e6, 100, 1000 );
 
 				renderer = new THREE.WebGLRenderer();
 				renderer.setClearColor( scene.fog.color );
 				renderer.setPixelRatio( window.devicePixelRatio );
 				renderer.setSize( window.innerWidth, window.innerHeight );
+
+				controls = new THREE.OrbitControls( camera, renderer.domElement );
+
 				container.appendChild( renderer.domElement );
 
 				initComputeRenderer();
@@ -517,6 +525,8 @@
 				gui.close();
 
 				initBirds();
+
+
 
 			}
 
@@ -565,7 +575,8 @@
 			function initBirds() {
 
 				var geometry = new THREE.BirdGeometry();
-			
+				
+				//var geometry = new THREE.ConeGeometry(30,30,3);
 				
 				// For Vertex and Fragment
 				birdUniforms = {
@@ -596,9 +607,7 @@
 			}
 
 			function fillPositionTexture( texture ) {
-
 				var theArray = texture.image.data;
-
 				for ( var k = 0, kl = theArray.length; k < kl; k += 4 ) {
 
 					var x = Math.random() * BOUNDS - BOUNDS_HALF;
@@ -650,6 +659,9 @@
 
 				mouseX = event.clientX - windowHalfX;
 				mouseY = event.clientY - windowHalfY;
+				//camera.rotation.y = -mouseX * Math.PI/180;
+				//camera.rotation.x = -mouseY * Math.PI/180;
+				//console.log(mouseX);
 
 			}
 
