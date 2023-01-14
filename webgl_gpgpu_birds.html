@@ -302,14 +302,14 @@
 			if (hash){
 				hash = parseInt(hash);
 			} 
-			//var BIRDS = hash || 5;
+			const BIRDS = hash || 100;
 			/* TEXTURE WIDTH FOR SIMULATION */
-			//var WIDTH = ~~Math.sqrt(BIRDS) + 1;
-			//if(!THREE.Math.isPowerOfTwo(WIDTH)){
-			//	WIDTH = THREE.Math.nextPowerOfTwo(WIDTH);
-			//}
-			const BIRDS = hash || 4;
-			const WIDTH = ~~Math.sqrt(BIRDS);
+			var WIDTH = ~~Math.sqrt(BIRDS);
+			if(!THREE.Math.isPowerOfTwo(WIDTH) || WIDTH * WIDTH < BIRDS){
+				WIDTH = THREE.Math.nextPowerOfTwo(WIDTH + 1);
+			}
+			//const BIRDS = hash || 64;
+			//const WIDTH = ~~Math.sqrt(BIRDS);
 			
 
 			// Custom Geometry - using 3 triangles each. No UVs, no normals currently.
@@ -419,7 +419,8 @@
 
 			//Number of birds controler
 			var options = '';
-			var j = [64, 256, 1024, 4096, 16384, 65536];
+			//var j = [64, 256, 1024, 4096, 16384, 65536];
+			var j = [100, 500, 1000, 5000, 15000, 50000];
 			for (i=0; i<6; i++) {
 				options += '<a href="#" onclick="return change(' + j[i] + ')">' + (j[i]) + '</a> ';
 			}
