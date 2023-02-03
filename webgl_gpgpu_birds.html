@@ -45,12 +45,6 @@
 		<script src="js/libs/dat.gui.min.js"></script>
 		<script src="js/GPUComputationRenderer.js"></script>
 
-		<!--
-		TODO: If you're reading this, you may wish to improve this example by
-			- Create a better shading for the birds?
-
-		-->
-
 		
 		<!-- shader for bird's position -->
 		<script id="fragmentShaderPosition" type="x-shader/x-fragment">
@@ -91,10 +85,6 @@
 
 			const float PI = 3.141592653589793;
 			const float PI_2 = PI * 2.0;
-
-			//const float bound = BOUNDS * 5;
-			//const float LOWER_BOUNDS = -UPPER_BOUNDS;
-
 			const float SPEED_LIMIT = 9.0;
 
 			float rand(vec2 co){
@@ -195,9 +185,6 @@
 					velocity += normalize(cohesionDir) * f;}
 				}
 
-				// this make tends to fly around than down or up
-				// if (velocity.y > 0.) velocity.y *= (1. - 0.2 * delta);
-
 				// Speed Limits
 				if ( length( velocity ) > limit ) {
 					velocity = normalize( velocity ) * limit;
@@ -230,25 +217,16 @@
 				vec3 pos = tmpPos.xyz;
 				vec3 velocity = normalize(texture2D( textureVelocity, reference ).xyz);
 
-				vec3 newPosition = position;
-
-				if ( birdVertex == 4.0 || birdVertex == 7.0 ) {
-					// flap wings
-					//newPosition.y = sin( tmpPos.w ) * 5.;
-				}
-
-				newPosition = mat3( modelMatrix ) * newPosition;
-
+				vec3 newPosition = mat3( modelMatrix ) * position;
 
 				velocity.z *= -1.;
 				float xz = length( velocity.xz );
-				float xyz = 1.;
-				float x = sqrt( 1. - velocity.y * velocity.y );
+				float xyz = length( velocity.xyz ); // = 1.
 
 				float cosry = velocity.x / xz;
 				float sinry = velocity.z / xz;
 
-				float cosrz = x / xyz;
+				float cosrz = xz / xyz;
 				float sinrz = velocity.y / xyz;
 
 				mat3 maty =  mat3(
@@ -285,10 +263,6 @@
 
 			void main() {
 				// Fake colors for now
-				// color fade 
-				float z2 = 0.2 + ( 1000. / z ) / 1000. * vColor.x;
-				//gl_FragColor = vec4( z2, z2, z2, 1. );
-				//float z2 =  z;
 				gl_FragColor = vec4( vColor.x, vColor.x, vColor.x, 1. );
 			}
 
@@ -312,7 +286,7 @@
 			//const WIDTH = ~~Math.sqrt(BIRDS);
 			
 
-			// Custom Geometry - using 3 triangles each. No UVs, no normals currently.
+			// Custom Geometry - using 4 triangles each. No UVs, no normals
 			THREE.BirdGeometry = function () {
 
 				var triangles = BIRDS*4;
@@ -420,8 +394,8 @@
 			//Number of birds controler
 			var options = '';
 			//var j = [64, 256, 1024, 4096, 16384, 65536];
-			var j = [100, 500, 1000, 5000, 15000, 50000];
-			for (i=0; i<6; i++) {
+			var j = [100, 500, 1000, 5000, 15000, 50000, 80000, 100000];
+			for (i=0; i<8; i++) {
 				options += '<a href="#" onclick="return change(' + j[i] + ')">' + (j[i]) + '</a> ';
 			}
 			document.getElementById('options').innerHTML = options;
@@ -579,8 +553,6 @@
 				birdMesh.matrixAutoUpdate = false;
 				birdMesh.updateMatrix();
 
-				scene.add(birdMesh);
-				scene.add(birdMesh);
 				scene.add(birdMesh);
 			}
 
